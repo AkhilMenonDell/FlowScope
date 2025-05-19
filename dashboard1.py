@@ -40,7 +40,7 @@ JOB_MAP = {
 }
 
 FOLDER_MAP = {
-    "DEV": "D1_PPE_BASELINE-0700",
+    "DEV": ["D1_PPE_BASELINE", "D1_PPE_BASELINE-0700"],
     "QA": "Q1_PPE_BASELINE",
     "PROD": "PPE_BASELINE-0200"
 }
@@ -117,7 +117,7 @@ st.subheader("📊 Job Statuses")
 
 if st.button("📦 Fetch Job Statuses"):
     jobnames = JOB_MAP.get(env, [])
-    folder = FOLDER_MAP.get(env)
+    # folder = FOLDER_MAP.get(env)
 
     status_counter = Counter()
     job_statuses = {}
@@ -147,15 +147,37 @@ if st.button("📦 Fetch Job Statuses"):
             stage_label = f"**🔹 Stage {i+1}: `{label}` (`{jobname}`)**"
 
             try:
-                resp = requests.get(f"{API_BASE}/job_status", params={
-                    "limit": 1000,
-                    "jobname": jobname,
-                    "folder": folder,
-                    "historyRunDate": date_str_job
-                })
-                result = resp.json()
-                status = result[0]['status'] if result and isinstance(result, list) else "Unknown"
+                folders = FOLDER_MAP.get(env, [])
+
+                def get_preferred_status(jobname: str, folders: list, date_str_job: str):
+                    results = []
+                    for folder in folders:
+                        try:
+                            resp = requests.get(f"{API_BASE}/job_status", params={
+                                "limit": 1000,
+                                "jobname": jobname,
+                                "folder": folder,
+                                "historyRunDate": date_str_job
+                            })
+                            resp.raise_for_status()
+                            result = resp.json()
+                            if result and isinstance(result, list) and result[0].get("status"):
+                                results.append({"folder": folder, "status": result[0]["status"]})
+                        except Exception:
+                            results.append({"folder": folder, "status": "Error"})
+
+                    # Priority Logic
+                    for r in results:
+                        if "Ended OK" in r["status"]:
+                            return r["status"], r["folder"]
+                    for r in results:
+                        if "Wait Condition" in r["status"] or "Running" in r["status"]:
+                            return r["status"], r["folder"]
+                    return results[0]["status"] if results else "Unknown", results[0]["folder"] if results else "N/A"
+
+                status, source_folder = get_preferred_status(jobname, folders, date_str_job)
                 job_statuses[jobname] = status
+
 
                 if "Ended OK" in status:
                     status_counter["Completed"] += 1
@@ -186,7 +208,9 @@ if st.button("📦 Fetch Job Statuses"):
                 col2.markdown(bar_html, unsafe_allow_html=True)
 
                 # Status
-                col3.markdown(f"<span style='font-size: 16px;'>{icon} {status}</span>", unsafe_allow_html=True)
+                # col3.markdown(f"<span style='font-size: 16px;'>{icon} {status}</span>", unsafe_allow_html=True)
+                col3.markdown(f"<span style='font-size: 16px;'>{icon} {status} <br/><small><i>({source_folder})</i></small></span>", unsafe_allow_html=True)
+
 
             except Exception as e:
                 status_counter["Pending"] += 1
